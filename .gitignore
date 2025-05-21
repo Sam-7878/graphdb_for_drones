@@ -3,6 +3,25 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+
+logfile
+logfile.swp
+
+
+# generated files of offline demos
+demo_offline/*/*.json
+demo_offline/*/*/*.pem
+demo_offline/*/*.pem
+demo_offline/*.db
+
+# generated files of did_graph demos
+demo_did_graph/*/*.json
+demo_did_graph/*/*/*.pem
+demo_did_graph/*/*.pem
+demo_did_graph/*.db
+demo_did_graph/*/*/*.csv
+demo_did_graph/*/*/*/*.csv
+
 # C extensions
 *.so
 

@@ -1,0 +1,97 @@
+# benchmark_scenario_c.py
+# Scenario C Benchmark: DID + VC + AgensGraph (Multi-Scale, Multi-Depth)
+
+import time
+import psycopg
+import statistics
+import json
+import sys
+from pathlib import Path
+
+# 프로젝트 루트를 PYTHONPATH에 추가 (common 모듈 로드용)
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT))
+from common.load_config import TestConfig
+
+# ─────────────────────────────────────────────────────────
+# 1) 설정 파일 로드
+# ─────────────────────────────────────────────────────────
+CONFIG_JSON = ROOT / "config" / "test_large.json"
+with open(CONFIG_JSON, 'r') as f:
+    cfg_raw = json.load(f)
+# 기존 TestConfig로 DB 정보만 로드
+cfg = TestConfig(str(CONFIG_JSON))
+# 시나리오 파라미터
+sp = cfg_raw.get("scenario_parameters", {})
+HQ_ID            = sp.get("HQ_ID", "HQ1")
+DEPTHS           = sp.get("depths", [4])
+SCALE_UP_NODES   = sp.get("scale_up_nodes", [])
+ITERATIONS       = sp.get("iterations", 200)
+
+# ─────────────────────────────────────────────────────────
+# 2) DB 연결 및 Graph 경로 설정
+# ─────────────────────────────────────────────────────────
+conn = psycopg.connect(
+    host=cfg.db_host,
+    port=cfg.db_port,
+    dbname=cfg.db_name,
+    user=cfg.db_user,
+    password=cfg.db_password
+)
+cur = conn.cursor()
+cur.execute("SET graph_path = vc_graph;")
+
+# ─────────────────────────────────────────────────────────
+# 3) 벤치마크용 Cypher 쿼리 생성함수
+# ─────────────────────────────────────────────────────────
+def get_bench_query(hq_id: str, max_depth: int) -> str:
+    return f"""
+MATCH (hq:HQ {{id:'{hq_id}'}})
+      -[:DELEGATES*1..{max_depth}]->(d:Drone)
+      <-[:ASSERTS]-(v:VC)
+RETURN count(v) AS vc_count;
+"""
+
+# ─────────────────────────────────────────────────────────
+# 4) 벤치마크 실행 함수
+# ─────────────────────────────────────────────────────────
+def benchmark_query(query: str, iterations: int):
+    latencies = []
+    # 워밍업
+    cur.execute(query)
+    cur.fetchone()
+
+    # 반복 실행
+    start_all = time.perf_counter()
+    for _ in range(iterations):
+        t0 = time.perf_counter()
+        cur.execute(query)
+        _ = cur.fetchone()[0]
+        latencies.append(time.perf_counter() - t0)
+    elapsed_all = time.perf_counter() - start_all
+
+    # 통계 계산
+    p50 = statistics.quantiles(latencies, n=100)[49]
+    p95 = statistics.quantiles(latencies, n=100)[94]
+    p99 = statistics.quantiles(latencies, n=100)[98]
+    tps = iterations / elapsed_all
+    return p50, p95, p99, tps
+
+# ─────────────────────────────────────────────────────────
+# 5) 메인 실행 흐름
+# ─────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    print("=== Scenario C Multi-Scale Benchmark ===")
+    for total_nodes in SCALE_UP_NODES:
+        print(f"\n-- Scale-up: {total_nodes} nodes --")
+        for depth in DEPTHS:
+            print(f"Depth: {depth}")
+            query = get_bench_query(HQ_ID, depth)
+            p50, p95, p99, tps = benchmark_query(query, ITERATIONS)
+            print(f"P50 latency : {p50*1000:.2f} ms")
+            print(f"P95 latency : {p95*1000:.2f} ms")
+            print(f"P99 latency : {p99*1000:.2f} ms")
+            print(f"Throughput  : {tps:.2f} qps")
+
+    cur.close()
+    conn.close()
