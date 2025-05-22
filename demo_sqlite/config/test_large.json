@@ -1,0 +1,95 @@
+{
+  "db_params": {
+    "host": "localhost",
+    "port": 5433,
+    "dbname": "edge",
+    "user": "sam",
+    "password": "dooley"
+  },
+  "node_count": {
+    "region": 10,
+    "unit": 100,
+    "squad": 1000,
+    "drone_per_squad": 10,
+    "mission": 1000,
+    "execution": 1000,
+    "verification": 1000
+  },
+  "headquarters_id": "HQ",
+  "private_key_path": "common/keys/commander_private.pem",
+  "data_result_path": "data/result/05_abac",
+  "scale_up_nodes": [2000, 5000, 10000],
+  "depths": [2, 4, 6, 8],
+  "iterations": 400,
+  "chunk_size": 1000,
+  "scenario_params": {
+    "1": {
+      "turn_taking": {
+        "interval_sec": 2,
+        "update_ratio": 0.4
+      },
+      "network": {
+        "delay_ms_range": [50, 200],
+        "packet_loss_rate": 0.01,
+        "link_partition": {
+          "interval_sec": 10,
+          "drop_percent": 0.05,
+          "recover_after_sec": 5
+        }
+      }
+    },
+    "2": {
+      "chain_churn": {
+        "depth_cycle": [4, 8, 12, 16],
+        "cycle_interval_sec": 10,
+        "update_ratio": 0.1
+      },
+      "network": {
+        "extra_delay_after_change_ms": 200,
+        "delay_duration_sec": 5,
+        "loss_rate_during_change": 0.05
+      }
+    },
+    "3": {
+      "partition_reconciliation": {
+        "split_duration_sec": 100,
+        "reconcile_duration_sec": 200,
+        "split_ratio": [0.4, 0.6],
+        "updates_per_sec": 100,
+        "post_reconcile_sync_requests": 400
+      },
+      "network": {
+        "full_partition": true
+      }
+    },
+    "4": {
+      "web_of_trust": {
+        "max_path_lengths": [2, 4, 6, 8],
+        "anchor_did": "HQ"
+      },
+      "network": {
+        "delay_ms_range": [50, 200],
+        "packet_loss_rate": 0.01,
+        "link_partition": {
+          "cycle_interval_sec": 3,
+          "drop_percent": 0.05,
+          "recover_after_sec": 3
+        }
+      }
+    },
+    "5": {
+      "abac": {
+        "max_depths": [4, 8, 12, 16]
+      },
+      "network": {
+        "delay_ms_range": [50, 200],
+        "packet_loss_rate": 0.01,
+        "link_partition": {
+          "cycle_interval_sec": 20,
+          "drop_percent": 0.05,
+          "recover_after_sec": 3
+        }
+      }
+    }
+  }
+}
