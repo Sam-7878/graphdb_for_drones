@@ -7,17 +7,18 @@ from kafka import KafkaProducer, KafkaConsumer
 import psycopg2
 import json
 import csv
+import os
 
 # —————— 설정 파라미터 ——————
-SQLITE_DB      = "db/drone_local.db"
+SQLITE_DB       = "db/drone_local.db"
 KAFKA_BOOTSTRAP = ["localhost:9092"]
 TOPIC           = "drone.cdc.items"
 GROUP_ID        = "latency-tester"
 GRAPHDB_DSN     = "host=localhost port=5432 dbname=testdb user=sam password=dooley"
 N_EVENTS        = 5000
-N_PRINT_COUNT   = 100
+LOG_INTERVAL    = 500  # 진행 메시지 출력 주기
 
-# —————— SQLite 초기화(트리거는 이미 생성되어 있다고 가정) ——————
+# —————— SQLite 커넥션 ——————
 def get_sqlite_conn():
     return apsw.Connection(SQLITE_DB)
 
@@ -35,73 +36,85 @@ consumer = KafkaConsumer(
     value_deserializer=lambda v: json.loads(v.decode("utf-8"))
 )
 
-# —————— GraphDB(AgensGraph) 커넥션 ——————
+# —————— GraphDB 커넥션 ——————
 def get_graphdb_conn():
     return psycopg2.connect(GRAPHDB_DSN)
 
-# —————— 단일 이벤트 E2E 측정 루프 ——————
+# —————— 통계 계산 헬퍼 ——————
+def summarize(latencies):
+    data = sorted(latencies)
+    count = len(data)
+    avg = statistics.mean(data)
+    min_v = data[0]
+    max_v = data[-1]
+    stddev = statistics.stdev(data) if count > 1 else 0.0
+    # percentiles
+    p50 = statistics.quantiles(data, n=100)[49]
+    p95 = statistics.quantiles(data, n=100)[94]
+    p99 = statistics.quantiles(data, n=100)[98]
+    return {
+        "count": count,
+        "avg_ms": avg,
+        "min_ms": min_v,
+        "max_ms": max_v,
+        "stddev_ms": stddev,
+        "p50_ms": p50,
+        "p95_ms": p95,
+        "p99_ms": p99
+    }
+
+# —————— 메인 테스트 루틴 ——————
 def run_e2e_latency_test():
+    # 초기화
     sqlite_conn = get_sqlite_conn()
     sqlite_cur  = sqlite_conn.cursor()
     graph_conn  = get_graphdb_conn()
     graph_cur   = graph_conn.cursor()
 
-    lat_drone_to_broker = []
-    lat_broker_to_graph = []
-    lat_e2e             = []
-
-    # 테스트 루프 시작 전에
-    # 1) SQLite DB 초기화
     sqlite_cur.execute("DELETE FROM items;")
-    sqlite_cur.execute("DELETE FROM cdc_log;")   # CDC 로그도 함께 초기화
-
-    # 2) AgensGraph 초기화
+    sqlite_cur.execute("DELETE FROM cdc_log;")
     graph_cur.execute("DROP GRAPH IF EXISTS vc_graph CASCADE;")
     graph_cur.execute("CREATE GRAPH vc_graph;")
     graph_cur.execute("SET graph_path = vc_graph;")
-    graph_cur.connection.commit()
+    graph_conn.commit()
 
-    print(f"▶ 시작: 총 {N_EVENTS}건 이벤트 처리 지연 측정\n")
-
-    # 미리 컨슈머 파티션 할당 대기
-    print("1️⃣  Kafka Consumer 초기화 중…")
+    print(f"▶ 시작: 총 {N_EVENTS}건 E2E 지연 측정\n")
+    print("1️⃣ Kafka Consumer 초기화 대기…")
     time.sleep(2)
 
-    for i in range(1, N_EVENTS + 1):
-        # 1) 로컬 INSERT
-        payload = {"id": i, "payload": f"event-{i}"}
-        if i % N_PRINT_COUNT == 0:
-            print(f"[{i}/{N_EVENTS}]  단계① INSERT → SQLite", end="… ")
-        t0 = time.perf_counter()
-        sqlite_cur.execute("INSERT OR REPLACE INTO items(id, payload) VALUES (?, ?);", (i, payload["payload"]))
+    lat_drone_to_broker = []
+    lat_broker_to_graph = []
+    lat_end_to_end      = []
 
-        # APSW 트리거가 CDC 로그 생성
-        t1 = None
+    for i in range(1, N_EVENTS + 1):
+        payload = {"id": i, "payload": f"event-{i}"}
+
+        # 1) 로컬 INSERT
+        t0 = time.perf_counter()
+        sqlite_cur.execute(
+            "INSERT OR REPLACE INTO items(id,payload) VALUES(?,?);",
+            (i, payload["payload"])
+        )
 
         # 2) Kafka 전송
-        if i % N_PRINT_COUNT == 0:
-            print("단계② 전송 → Kafka", end="… ")
         fut = producer.send(TOPIC, value=payload)
-        fut.get(timeout=10)  # 전송 완료 대기
+        fut.get(timeout=10)
         t1 = time.perf_counter()
 
-        # 3) GraphDB 반영
-        if i % N_PRINT_COUNT == 0:
-            print("단계③ 수신 → GraphDB 반영", end="… ")
-        # Kafka에서 방금 보낸 메시지 소비
+        # 3) Kafka 수신 및 GraphDB 반영
         msg = None
         while True:
-            rec = consumer.poll(timeout_ms=1000)
-            if rec:
-                for tp, records in rec.items():
-                    for record in records:
-                        if record.value.get("id") == i:
-                            msg = record.value
-                            break
-            if msg is not None:
-                break
+            recs = consumer.poll(timeout_ms=500)
+            found = False
+            for tp, records in recs.items():
+                for record in records:
+                    if record.value.get("id") == i:
+                        msg = record.value
+                        found = True
+                        break
+                if found: break
+            if msg: break
 
-        # 예시: GraphDB에 단순 노드 생성 쿼리 (실환경에는 Debezium Sink Connector 로 자동 반영)
         graph_cur.execute(
             "CREATE (n:Item {id:%s, payload:%s});",
             (msg["id"], msg["payload"])
@@ -109,54 +122,57 @@ def run_e2e_latency_test():
         graph_conn.commit()
         t2 = time.perf_counter()
 
-        # 4) 지연 계산
-        dt1 = (t1 - t0) * 1e3         # 드론→브로커 (ms)
-        dt2 = (t2 - t1) * 1e3         # 브로커→GraphDB (ms)
-        dtE = (t2 - t0) * 1e3         # 전체 E2E (ms)
+        # 지연 기록
+        dt1 = (t1 - t0) * 1e3
+        dt2 = (t2 - t1) * 1e3
+        dtE = (t2 - t0) * 1e3
         lat_drone_to_broker.append(dt1)
         lat_broker_to_graph.append(dt2)
-        lat_e2e.append(dtE)
+        lat_end_to_end.append(dtE)
 
-        if i % N_PRINT_COUNT == 0:
-            print(f"완료. E2E={dtE:.1f}ms (D→K={dt1:.1f}ms, K→G={dt2:.1f}ms)")
+        # 진행 메시지
+        if i % LOG_INTERVAL == 0 or i == N_EVENTS:
+            print(f"[{i}/{N_EVENTS}] 현재 E2E={dtE:.1f}ms (D→K={dt1:.1f}, K→G={dt2:.1f})")
 
-    # —————— 통계 산출 ——————
-    def calc_stats(data):
-        return {
-            "avg": statistics.mean(data),
-            "p50": statistics.quantiles(data, n=100)[49],
-            "p95": statistics.quantiles(data, n=100)[94],
-            "p99": statistics.quantiles(data, n=100)[98],
-        }
-
+    # 통계 요약
     stats = {
-        "drone_to_broker": calc_stats(lat_drone_to_broker),
-        "broker_to_graph": calc_stats(lat_broker_to_graph),
-        "end_to_end":      calc_stats(lat_e2e),
+        "drone_to_broker": summarize(lat_drone_to_broker),
+        "broker_to_graph": summarize(lat_broker_to_graph),
+        "end_to_end":      summarize(lat_end_to_end)
     }
 
-
-    # —————— 콘솔 출력 ——————
-    print("\n▶ 결과:")
-    for phase, s in stats.items():
-        print(f"  ■ {phase}: AVG={s['avg']:.1f}ms, P50={s['p50']:.1f}ms, "
-              f"P95={s['p95']:.1f}ms, P99={s['p99']:.1f}ms")
-
-    # —————— CSV 파일 저장 ——————
-    csv_file = "result/scenario2_latency_stats.csv"
+    # CSV 파일로 저장
+    out_dir = "result"
+    os.makedirs(out_dir, exist_ok=True)
+    csv_file = os.path.join(out_dir, "scenario2_detailed_latency.csv")
     with open(csv_file, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["phase", "avg_ms", "p50_ms", "p95_ms", "p99_ms"])
+        fieldnames = [
+            "phase", "count", "avg_ms", "min_ms", "max_ms",
+            "stddev_ms", "p50_ms", "p95_ms", "p99_ms"
+        ]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
         for phase, s in stats.items():
-            writer.writerow([phase, f"{s['avg']:.1f}", f"{s['p50']:.1f}",
-                             f"{s['p95']:.1f}", f"{s['p99']:.1f}"])
-    print(f"\n✅ 지연 통계가 '{csv_file}'에 저장되었습니다.")
+            row = {"phase": phase}
+            row.update({k: f"{v:.2f}" if isinstance(v, float) else v 
+                        for k, v in s.items()})
+            writer.writerow(row)
 
+    # 콘솔 요약 출력
+    print("\n▶ 상세 지연 통계:")
+    for phase, s in stats.items():
+        print(f"  ■ {phase}: count={s['count']}, avg={s['avg_ms']:.1f}ms, "
+              f"min={s['min_ms']:.1f}, max={s['max_ms']:.1f}, stddev={s['stddev_ms']:.1f}ms, "
+              f"P50={s['p50_ms']:.1f}ms, P95={s['p95_ms']:.1f}ms, P99={s['p99_ms']:.1f}ms")
+    print(f"\n✅ 결과가 '{csv_file}'에 저장되었습니다.")
 
-    # 종료
+    # 정리
     producer.close()
     consumer.close()
     graph_conn.close()
 
+
+
 if __name__ == "__main__":
     run_e2e_latency_test()
+
