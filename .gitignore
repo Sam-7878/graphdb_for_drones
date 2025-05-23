@@ -22,6 +22,15 @@ demo_did_graph/*.db
 demo_did_graph/*/*/*.csv
 demo_did_graph/*/*/*/*.csv
 
+# generated files of sqlite demos
+demo_sqlite_cdc/*/*.json
+demo_sqlite_cdc/*/*/*.pem
+demo_sqlite_cdc/*/*.pem
+demo_sqlite_cdc/*.db
+demo_sqlite_cdc/*/*/*.csv
+demo_sqlite_cdc/*/*/*/*.csv
+
+
 # C extensions
 *.so
 
