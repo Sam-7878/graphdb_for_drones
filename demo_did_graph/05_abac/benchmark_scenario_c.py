@@ -139,7 +139,6 @@ def scenario3_partition_reconciliation(cur, conn, cfg, params, scale_up_nodes, d
     # Partition & Reconciliation 시나리오도 동일하게 graph 초기화
     split_ratio = params['partition_reconciliation']['split_ratio']
     split_duration_sec = params['partition_reconciliation']['split_duration_sec']
-    reconcile_duration_sec = params['partition_reconciliation']['reconcile_duration_sec']
     post_reconcile_sync_requests = params['partition_reconciliation']['post_reconcile_sync_requests']
 
     print(f"\n=== Reinitializing graph for Partition & Reconciliation ===")

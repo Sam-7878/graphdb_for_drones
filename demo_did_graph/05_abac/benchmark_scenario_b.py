@@ -111,11 +111,12 @@ def scenario2_chain_churn(cfg, params, iterations, rows, private_key):
     drones = load_drones(cur)
     depths = cfg.depths
     scale_nodes = cfg.scale_up_nodes
-    ratio = params['2']['chain_churn']['update_ratio']
+    ratio = params['chain_churn']['update_ratio']
 
     for num_nodes in scale_nodes:
+        print(f"\n-- Chain-Churn: num_nodes={num_nodes} --")
         for depth in depths:
-            churn_count = int(len(drones) * ratio)
+            churn_count = int(num_nodes * ratio)
             sample_dids = random.sample(drones, churn_count)
             # 체인 분리 및 재결합
             for did in sample_dids:
@@ -158,10 +159,11 @@ def scenario3_partition_reconciliation(cfg, params, iterations, rows, private_ke
     conn = psycopg.connect(**cfg.db_params)
     cur = conn.cursor()
 
-    drones = load_drones(cur)
-    partitions = params['3']['partition_reconciliation']['partitions']
-    depths = params['3']['partition_reconciliation']['depths']
-    syncs = params['3']['partition_reconciliation']['post_reconcile_sync_requests']
+    drones_list = load_drones(cur)
+    partitions = params['partition_reconciliation']['partitions']
+    depths = params['partition_reconciliation']['depths']
+    syncs = params['partition_reconciliation']['post_reconcile_sync_requests']
+    post_reconcile_sync_requests = params['partition_reconciliation']['post_reconcile_sync_requests']
 
     for part in partitions:
         for depth in depths:
@@ -176,11 +178,11 @@ def scenario3_partition_reconciliation(cfg, params, iterations, rows, private_ke
             conn.commit()
 
             for _ in range(syncs):
-                sql = f"WITH RECURSIVE chain(drone_id, hq_id, lvl) AS ("
-                sql += f" SELECT drone_id, hq_id, 1 FROM delegation WHERE hq_id = '{cfg.headquarters_id}' "
-                sql += f" UNION ALL SELECT d.drone_id, d.hq_id, lvl+1 FROM chain c "
-                sql += f" JOIN delegation d ON c.drone_id = d.hq_id WHERE lvl < {depth}) SELECT count(*) FROM chain;"
-                p50, p95, p99, tps = benchmark_query(cur, sql, iterations)
+                query = f"WITH RECURSIVE chain(drone_id, hq_id, lvl) AS ("
+                query += f" SELECT drone_id, hq_id, 1 FROM delegation WHERE hq_id = '{cfg.headquarters_id}' "
+                query += f" UNION ALL SELECT d.drone_id, d.hq_id, lvl+1 FROM chain c "
+                query += f" JOIN delegation d ON c.drone_id = d.hq_id WHERE lvl < {depth}) SELECT count(*) FROM chain;"
+                p50, p95, p99, tps = benchmark_query(cur, query, post_reconcile_sync_requests)
             rows.append(["scenario3", part, depth, p50, p95, p99, tps])
 
     cur.close()
@@ -202,7 +204,7 @@ def scenario4_web_of_trust(cfg, params, iterations, rows):
     candidates = [r[0] for r in cur.fetchall()]
 
     # 4) 파라미터화된 재귀 CTE 쿼리 준비
-    cte_query = """
+    query = """
     WITH RECURSIVE path(cn, lvl) AS (
       SELECT from_did::text, 1
         FROM web_trust
@@ -219,7 +221,7 @@ def scenario4_web_of_trust(cfg, params, iterations, rows):
     # 5) 워밍업: Plan 캐싱 및 JIT 컴파일 방지
     warm_client = random.choice(candidates)
     warm_length = lengths[0]
-    cur.execute(cte_query, {
+    cur.execute(query, {
         'client': warm_client,
         'length': warm_length,
         'anchor': anchor
@@ -233,7 +235,7 @@ def scenario4_web_of_trust(cfg, params, iterations, rows):
 
         p50, p95, p99, tps = benchmark_query_parametric(
             cur,
-            cte_query,
+            query,
             iterations,
             params={'client': client, 'length': length, 'anchor': anchor}
         )
@@ -259,7 +261,7 @@ def scenario4_web_of_trust(cfg, params, iterations, rows):
     conn.close()
 
 
-def scenario5_abac(cur, cfg, params, iterations, rows):
+def scenario5_abac(cfg, params, iterations, rows):
     conn = psycopg.connect(**cfg.db_params)
     cur = conn.cursor()
 

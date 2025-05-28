@@ -209,19 +209,8 @@ def scenario4_web_of_trust(cur, cfg, params, iterations, rows):
     candidates = [r[0] for r in cur.fetchall()]
     for length in lengths:
         client = random.choice(candidates)
-        # q = f"""
-        # WITH RECURSIVE trust_path(from_did, to_did, depth) AS (
-        #   SELECT from_did, to_did, 1 FROM web_trust WHERE from_did = %s
-        #   UNION ALL
-        #   SELECT wt.from_did, wt.to_did, tp.depth + 1
-        #     FROM web_trust wt
-        #     JOIN trust_path tp ON wt.from_did = tp.to_did
-        #   WHERE tp.depth < %s
-        # )
-        # SELECT COUNT(*) FROM trust_path WHERE to_did = %s;
-        # """
-        # cur.execute(q, (client, length, anchor))
-        q = f"""
+
+        query = f"""
         WITH RECURSIVE trust_path(from_did, to_did, depth) AS (
           SELECT from_did, to_did, 1 FROM web_trust WHERE from_did = '{client}'
           UNION ALL
@@ -232,11 +221,10 @@ def scenario4_web_of_trust(cur, cfg, params, iterations, rows):
         )
         SELECT COUNT(*) FROM trust_path WHERE to_did = '{anchor}';
         """
-        cur.execute(q)
+        cur.execute(query)
         cur.fetchone()
 
-        p50, p95, p99, tps = benchmark_query(cur, q, iterations)
-        # p50, p95, p99, tps = benchmark_query_parametric(cur, q, iterations, params=(client, length, anchor))
+        p50, p95, p99, tps = benchmark_query(cur, query, iterations)
 
         print(f"[WebTrust len={length}] P50={p50*1000:.2f}ms, p95={p95*1000:.2f}ms, p99={p99*1000:.2f}ms, TPS={tps:.2f}")
         rows.append({
