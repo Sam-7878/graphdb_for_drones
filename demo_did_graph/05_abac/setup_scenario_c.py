@@ -187,12 +187,12 @@ def setup_database(cfg: TestConfig, private_key, scenario: int):
     cur.execute("SET synchronous_commit = ON;")
     conn.commit()
 
-    if scenario in (1,2,3):
+    if scenario in (1, 2, 5):
         setup_dynamic_graph(cur, cfg, private_key)
+    elif scenario == 3:
+        setup_abac(cur, cfg)
     elif scenario == 4:
         setup_web_of_trust(cur, cfg)
-    elif scenario == 5:
-        setup_abac(cur, cfg)
     else:
         raise ValueError(f"Unsupported scenario: {scenario}")
 

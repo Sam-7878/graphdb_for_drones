@@ -46,7 +46,7 @@ def setup_database(cfg, private_key, scenario):
     conn.commit()
     print("› synchronous_commit 설정 ON")
 
-    if scenario in (1, 2, 3):
+    if scenario in (1, 2, 5):
         cur.execute("TRUNCATE TABLE mission_test;")
         cur.execute("CREATE TABLE IF NOT EXISTS delegation (drone_id INTEGER PRIMARY KEY, hq_id TEXT NOT NULL);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_delegation_hq_id ON delegation(hq_id);")
@@ -70,27 +70,7 @@ def setup_database(cfg, private_key, scenario):
         conn.commit()
         print(f"› Scenario A-{scenario}: 기본 위임 및 미션 생성 완료")
 
-    elif scenario == 4:
-        cur.execute("DROP TABLE IF EXISTS web_trust;")
-        cur.execute("""
-            CREATE UNLOGGED TABLE web_trust (
-                from_did TEXT NOT NULL,
-                to_did TEXT NOT NULL
-            );
-        """)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_from_did ON web_trust(from_did);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_to_did ON web_trust(to_did);")
-        conn.commit()
-
-        anchor = cfg.scenario_params['4']['web_of_trust']['anchor_did']
-        entities = [create_did() for _ in range(cfg.num_drones)]
-        for i in range(len(entities)-1):
-            cur.execute("INSERT INTO web_trust (from_did, to_did) VALUES (%s, %s);", (entities[i], entities[i+1]))
-        cur.execute("INSERT INTO web_trust (from_did, to_did) VALUES (%s, %s);", (entities[-1], anchor))
-        conn.commit()
-        print(f"› Scenario A-4 Web-of-Trust 생성 완료 → {anchor}")
-
-    elif scenario == 5:
+    elif scenario == 3:
         cur.execute("DROP TABLE IF EXISTS abac_user, abac_group, abac_resource, abac_member, abac_subgroup, abac_permission;")
         cur.execute("CREATE TABLE abac_user (did TEXT PRIMARY KEY);")
         cur.execute("CREATE TABLE abac_group (id TEXT PRIMARY KEY);")
@@ -120,6 +100,26 @@ def setup_database(cfg, private_key, scenario):
             cur.execute("INSERT INTO abac_permission (group_id, resource_id) VALUES (%s, %s);", (groups[-1], r))
         conn.commit()
         print(f"› Scenario A-5 ABAC 삽입 완료: 사용자={len(users)}, 그룹={len(groups)}, 리소스={len(resources)}")
+
+    elif scenario == 4:
+        cur.execute("DROP TABLE IF EXISTS web_trust;")
+        cur.execute("""
+            CREATE UNLOGGED TABLE web_trust (
+                from_did TEXT NOT NULL,
+                to_did TEXT NOT NULL
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_from_did ON web_trust(from_did);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_to_did ON web_trust(to_did);")
+        conn.commit()
+
+        anchor = cfg.scenario_params['4']['web_of_trust']['anchor_did']
+        entities = [create_did() for _ in range(cfg.num_drones)]
+        for i in range(len(entities)-1):
+            cur.execute("INSERT INTO web_trust (from_did, to_did) VALUES (%s, %s);", (entities[i], entities[i+1]))
+        cur.execute("INSERT INTO web_trust (from_did, to_did) VALUES (%s, %s);", (entities[-1], anchor))
+        conn.commit()
+        print(f"› Scenario A-4 Web-of-Trust 생성 완료 → {anchor}")
 
     cur.close()
     conn.close()

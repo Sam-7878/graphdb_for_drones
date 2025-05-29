@@ -44,7 +44,7 @@ def setup_database(cfg: TestConfig, private_key, scenario: int):
     conn.commit()
     print("› synchronous_commit ON 설정 완료")
 
-    if scenario in (1, 2, 3):
+    if scenario in (1, 2, 5):
         # delegation 테이블: drone_id TEXT, hq_id TEXT
         cur.execute("DROP TABLE IF EXISTS delegation;")
         cur.execute("""
@@ -132,6 +132,40 @@ def setup_database(cfg: TestConfig, private_key, scenario: int):
         print(f"› VC 등록 완료: {cfg.num_drones} credentials")
         print(f"› VC 등록 완료: {cfg.num_drones} credentials")
 
+    elif scenario == 3:
+        # ABAC 테이블 생성 및 초기화
+        cur.execute("DROP TABLE IF EXISTS abac_user, abac_group, abac_resource, abac_member, abac_subgroup, abac_permission;")
+        cur.execute("CREATE TABLE abac_user (did TEXT PRIMARY KEY);")
+        cur.execute("CREATE TABLE abac_group (id TEXT PRIMARY KEY);")
+        cur.execute("CREATE TABLE abac_resource (id TEXT PRIMARY KEY);")
+        cur.execute("CREATE TABLE abac_member (user_did TEXT, group_id TEXT);")
+        cur.execute("CREATE TABLE abac_subgroup (from_id TEXT, to_id TEXT);")
+        cur.execute("CREATE TABLE abac_permission (group_id TEXT, resource_id TEXT);")
+        conn.commit()
+
+        users = [create_did() for _ in range(cfg.num_drones)]
+        groups = [create_did() for _ in range(max(1, cfg.num_drones // 10))]
+        resources = [create_did() for _ in range(len(groups))]
+
+        for u in users:
+            cur.execute("INSERT INTO abac_user (did) VALUES (%s) ON CONFLICT DO NOTHING;", (u,))
+        for g in groups:
+            cur.execute("INSERT INTO abac_group (id) VALUES (%s) ON CONFLICT DO NOTHING;", (g,))
+        for r in resources:
+            cur.execute("INSERT INTO abac_resource (id) VALUES (%s) ON CONFLICT DO NOTHING;", (r,))
+        conn.commit()
+
+        # 그룹 관계 및 권한 설정
+        for idx, u in enumerate(users):
+            g = groups[idx % len(groups)]
+            cur.execute("INSERT INTO abac_member (user_did, group_id) VALUES (%s, %s);", (u, g))
+        for i in range(len(groups)-1):
+            cur.execute("INSERT INTO abac_subgroup (from_id, to_id) VALUES (%s, %s);", (groups[i], groups[i+1]))
+        for r in resources:
+            cur.execute("INSERT INTO abac_permission (group_id, resource_id) VALUES (%s, %s);", (groups[-1], r))
+        conn.commit()
+        print(f"› ABAC 사용자 {len(users)}, 그룹 {len(groups)}, 리소스 {len(resources)} 삽입 완료")
+
     elif scenario == 4:
         # Web-of-Trust RDB 구현
         cur.execute("DROP TABLE IF EXISTS web_trust;")
@@ -166,40 +200,6 @@ def setup_database(cfg: TestConfig, private_key, scenario: int):
         )
         conn.commit()
         print(f"› Web-of-Trust 생성 완료: {len(entities)} chain → {anchor}")
-
-    elif scenario == 5:
-        # ABAC 테이블 생성 및 초기화
-        cur.execute("DROP TABLE IF EXISTS abac_user, abac_group, abac_resource, abac_member, abac_subgroup, abac_permission;")
-        cur.execute("CREATE TABLE abac_user (did TEXT PRIMARY KEY);")
-        cur.execute("CREATE TABLE abac_group (id TEXT PRIMARY KEY);")
-        cur.execute("CREATE TABLE abac_resource (id TEXT PRIMARY KEY);")
-        cur.execute("CREATE TABLE abac_member (user_did TEXT, group_id TEXT);")
-        cur.execute("CREATE TABLE abac_subgroup (from_id TEXT, to_id TEXT);")
-        cur.execute("CREATE TABLE abac_permission (group_id TEXT, resource_id TEXT);")
-        conn.commit()
-
-        users = [create_did() for _ in range(cfg.num_drones)]
-        groups = [create_did() for _ in range(max(1, cfg.num_drones // 10))]
-        resources = [create_did() for _ in range(len(groups))]
-
-        for u in users:
-            cur.execute("INSERT INTO abac_user (did) VALUES (%s) ON CONFLICT DO NOTHING;", (u,))
-        for g in groups:
-            cur.execute("INSERT INTO abac_group (id) VALUES (%s) ON CONFLICT DO NOTHING;", (g,))
-        for r in resources:
-            cur.execute("INSERT INTO abac_resource (id) VALUES (%s) ON CONFLICT DO NOTHING;", (r,))
-        conn.commit()
-
-        # 그룹 관계 및 권한 설정
-        for idx, u in enumerate(users):
-            g = groups[idx % len(groups)]
-            cur.execute("INSERT INTO abac_member (user_did, group_id) VALUES (%s, %s);", (u, g))
-        for i in range(len(groups)-1):
-            cur.execute("INSERT INTO abac_subgroup (from_id, to_id) VALUES (%s, %s);", (groups[i], groups[i+1]))
-        for r in resources:
-            cur.execute("INSERT INTO abac_permission (group_id, resource_id) VALUES (%s, %s);", (groups[-1], r))
-        conn.commit()
-        print(f"› ABAC 사용자 {len(users)}, 그룹 {len(groups)}, 리소스 {len(resources)} 삽입 완료")
 
     else:
         raise ValueError(f"Unsupported scenario: {scenario}")
