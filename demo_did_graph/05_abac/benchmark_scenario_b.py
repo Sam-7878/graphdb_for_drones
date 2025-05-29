@@ -202,40 +202,6 @@ def scenario2_chain_churn(cfg, params, iterations, rows, private_key):
 
 
 
-def scenario5_partition_reconciliation(cfg, params, iterations, rows, private_key):
-    conn = psycopg.connect(**cfg.db_params)
-    cur = conn.cursor()
-
-    drones_list = load_drones(cur)
-    partitions = params['partition_reconciliation']['partitions']
-    depths = params['partition_reconciliation']['depths']
-    syncs = params['partition_reconciliation']['post_reconcile_sync_requests']
-    post_reconcile_sync_requests = params['partition_reconciliation']['post_reconcile_sync_requests']
-
-    for part in partitions:
-        for depth in depths:
-            # 파티션 왕복 업데이트
-            for did in part:
-                cur.execute("DELETE FROM delegation WHERE drone_id = %s;", (did,))
-                cur.execute(
-                    "INSERT INTO delegation(drone_id, hq_id) VALUES(%s, %s)"
-                    " ON CONFLICT (drone_id) DO UPDATE SET hq_id = EXCLUDED.hq_id;",
-                    (did, cfg.headquarters_id)
-                )
-            conn.commit()
-
-            for _ in range(syncs):
-                query = f"WITH RECURSIVE chain(drone_id, hq_id, lvl) AS ("
-                query += f" SELECT drone_id, hq_id, 1 FROM delegation WHERE hq_id = '{cfg.headquarters_id}' "
-                query += f" UNION ALL SELECT d.drone_id, d.hq_id, lvl+1 FROM chain c "
-                query += f" JOIN delegation d ON c.drone_id = d.hq_id WHERE lvl < {depth}) SELECT count(*) FROM chain;"
-                p50, p95, p99, tps = benchmark_query(cur, query, post_reconcile_sync_requests)
-            rows.append(["scenario3", part, depth, p50, p95, p99, tps])
-
-    cur.close()
-    conn.close()
-
-
 def scenario3_abac(cfg, params, iterations, rows):
     conn = psycopg.connect(**cfg.db_params)
     cur = conn.cursor()
@@ -353,6 +319,52 @@ def scenario4_web_of_trust(cfg, params, iterations, rows):
     conn.close()
 
 
+def scenario5_partition_reconciliation(cfg, params, iterations, rows, private_key):
+    conn = psycopg.connect(**cfg.db_params)
+    cur = conn.cursor()
+
+    total = cfg.num_drones
+    drones_list = load_drones(cur)
+    partitions = params['partition_reconciliation']['partitions']
+    depths = params['partition_reconciliation']['depths']
+    syncs = params['partition_reconciliation']['post_reconcile_sync_requests']
+    post_reconcile_sync_requests = params['partition_reconciliation']['post_reconcile_sync_requests']
+
+    for part in partitions:
+        for depth in depths:
+            # 파티션 왕복 업데이트
+            for did in part:
+                cur.execute("DELETE FROM delegation WHERE drone_id = %s;", (did,))
+                cur.execute(
+                    "INSERT INTO delegation(drone_id, hq_id) VALUES(%s, %s)"
+                    " ON CONFLICT (drone_id) DO UPDATE SET hq_id = EXCLUDED.hq_id;",
+                    (did, cfg.headquarters_id)
+                )
+            conn.commit()
+
+            for _ in range(syncs):
+                query = f"WITH RECURSIVE chain(drone_id, hq_id, lvl) AS ("
+                query += f" SELECT drone_id, hq_id, 1 FROM delegation WHERE hq_id = '{cfg.headquarters_id}' "
+                query += f" UNION ALL SELECT d.drone_id, d.hq_id, lvl+1 FROM chain c "
+                query += f" JOIN delegation d ON c.drone_id = d.hq_id WHERE lvl < {depth}) SELECT count(*) FROM chain;"
+                p50, p95, p99, tps = benchmark_query(cur, query, post_reconcile_sync_requests)
+
+                print(f"Reconciliation → P50: {p50*1000:.2f} ms, P95: {p95*1000:.2f} ms, P99: {p99*1000:.2f} ms, TPS: {tps:.2f}")
+                rows.append({
+                    'scenario': f'B-{args.scenario}', 
+                    'scale_up': total, 
+                    'depth': depths[0],
+                    'p50_ms': p50*1000, 
+                    'p95_ms': p95*1000, 
+                    'p99_ms': p99*1000, 
+                    'tps': tps
+                })
+
+    cur.close()
+    conn.close()
+
+
+
 def main(args):
     cfg = TestConfig(args.config)
     private_key = load_private_key(cfg.private_key_path)
@@ -363,15 +375,22 @@ def main(args):
     setup_database(cfg, private_key, int(args.scenario))
 
     if args.scenario == '1':
+        print("=== Running Scenario B-1: Real-Time Turn-Taking ===")
         scenario1_realtime_turntaking(cfg, params, iterations, rows, private_key)
     elif args.scenario == '2':
+        print("=== Running Scenario B-2: Chain-Churn ===")
         scenario2_chain_churn(cfg, params, iterations, rows, private_key)
     elif args.scenario == '3':
+        print("=== Running Scenario B-3: ABAC (RDB) ===")
         scenario3_abac(cfg, params, iterations, rows)
     elif args.scenario == '4':
+        print("=== Running Scenario B-4: Web-of-Trust (RDB) ===")
         scenario4_web_of_trust(cfg, params, iterations, rows)
     elif args.scenario == '5':
+        print("=== Running Scenario B-5: Partition & Reconciliation ===")
         scenario5_partition_reconciliation(cfg, params, iterations, rows, private_key)
+    else:
+        raise ValueError("Unsupported scenario for security patterns")
 
     # 결과 저장
     result_dir = Path(ROOT) / cfg.data_result_path

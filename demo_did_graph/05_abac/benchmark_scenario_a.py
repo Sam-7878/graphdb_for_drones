@@ -114,48 +114,6 @@ def scenario1_realtime_turntaking(cur, conn, cfg, params, nodes, depths, iterati
             })
 
 
-# def scenario2_chain_churn(cur, conn, cfg, params, nodes, depths, iterations, rows):
-#     cycle = params['chain_churn']['depth_cycle']
-#     interval = params['chain_churn']['cycle_interval_sec']
-#     ratio = params['chain_churn']['update_ratio']
-
-#     update_count = int(cfg.num_drones * ratio)
-#     drones = random.sample(range(cfg.num_drones), update_count)
-#     # drones = random.sample(drones_list, update_count)
-
-#     for depth in cycle:
-#         print(f"\n-- Chain-Churn: depth={depth} --")
-
-#         # ─── moderate‐sized batch 업데이트 ───
-#         chunk_size = cfg.chunk_size
-#         for i in range(0, len(drones), chunk_size):
-#             chunk = drones[i:i+chunk_size]
-#             cur.execute(
-#                 "UPDATE delegation SET hq_id = %s WHERE drone_id = ANY(%s)",
-#                 (cfg.headquarters_id, chunk)
-#             )
-#             conn.commit()
-
-
-#         time.sleep(interval)
-#         query = get_bench_query(cfg.headquarters_id, depth)
-#         cur.execute(query)
-#         cur.fetchone()
-
-#         p50, p95, p99, tps = benchmark_query(cur, query, iterations)
-
-#         print(f"Depth {depth} → P50: {p50*1000:.2f} ms, P95: {p95*1000:.2f} ms, P99: {p99*1000:.2f} ms, TPS: {tps:.2f}")
-#         rows.append({
-#             'scenario': 'A-2', 
-#             'scale_up': '', 
-#             'depth': depth,
-#             'p50_ms': p50*1000, 
-#             'p95_ms': p95*1000, 
-#             'p99_ms': p99*1000, 
-#             'tps': tps
-#         })
-
-
 def get_rdb_bench_query(headquarters_id: str, depth: int) -> str:
     """
     Returns a SQL query which, starting from all drones directly
@@ -240,7 +198,7 @@ def scenario2_chain_churn(cfg, params, iterations, rows):
                   f"TPS: {tps:.2f}")
 
             rows.append({
-                'scenario': f'B-{args.scenario}',
+                'scenario': f'A-{args.scenario}',
                 'scale_up': num_nodes,
                 'depth': depth,
                 'p50_ms': p50 * 1000,
@@ -260,6 +218,7 @@ def scenario3_abac(cur, cfg, params, iterations, rows):
 
     cur.execute("SELECT did FROM abac_user;")
     users = [r[0] for r in cur.fetchall()]
+    
     cur.execute("SELECT id FROM abac_resource;")
     resources = [r[0] for r in cur.fetchall()]
 
@@ -280,14 +239,14 @@ def scenario3_abac(cur, cfg, params, iterations, rows):
           JOIN abac_permission p ON g.group_id = p.group_id
          WHERE p.resource_id = '{resource}';
         """
-        cur.execute(q)
+        cur.execute(query)
         cur.fetchone()
 
         p50, p95, p99, tps = benchmark_query(cur, query, iterations)
 
         print(f"[ABAC depth={depth}] P50={p50*1000:.2f}ms, p95={p95*1000:.2f}ms, p99={p99*1000:.2f}ms, TPS={tps:.2f}")
         rows.append({
-            'scenario':'A-5', 
+            'scenario': f'A-{args.scenario}', 
             'depth':depth, 
             'p50_ms':p50*1000, 
             'p95_ms':p95*1000, 
@@ -323,7 +282,7 @@ def scenario4_web_of_trust(cur, cfg, params, iterations, rows):
 
         print(f"[WebTrust len={length}] P50={p50*1000:.2f}ms, p95={p95*1000:.2f}ms, p99={p99*1000:.2f}ms, TPS={tps:.2f}")
         rows.append({
-            'scenario':'A-4', 
+            'scenario': f'A-{args.scenario}', 
             'length':length, 
             'p50_ms':p50*1000, 
             'p95_ms':p95*1000, 
@@ -380,7 +339,7 @@ def scenario5_partition_reconciliation(cur, conn, cfg, params, nodes, depths, it
 
     print(f"Reconciliation → P50: {p50*1000:.2f} ms, P95: {p95*1000:.2f} ms, P99: {p99*1000:.2f} ms, TPS: {tps:.2f}")
     rows.append({
-        'scenario': 'A-3', 
+        'scenario': f'A-{args.scenario}', 
         'scale_up': total, 
         'depth': depths[0],
         'p50_ms': p50*1000, 
@@ -425,19 +384,19 @@ if __name__ == '__main__':
 
     rows = []
     if args.scenario == '1':
-        print("=== Running Scenario B-1: Real-Time Turn-Taking ===")
+        print("=== Running Scenario A-1: Real-Time Turn-Taking ===")
         scenario1_realtime_turntaking(cur, conn, cfg, params, scale_up_nodes, depths, iterations, rows)
     elif args.scenario == '2':
-        print("=== Running Scenario B-2: Chain-Churn ===")
+        print("=== Running Scenario A-2: Chain-Churn ===")
         scenario2_chain_churn(cfg, params, iterations, rows)
     elif args.scenario == '3':
-        print("=== Running Scenario B-3: ABAC (RDB) ===")
+        print("=== Running Scenario A-3: ABAC (RDB) ===")
         scenario3_abac(cur, cfg, params, iterations, rows)
     elif args.scenario == '4':
-        print("=== Running Scenario B-4: Web-of-Trust (RDB) ===")
+        print("=== Running Scenario A-4: Web-of-Trust (RDB) ===")
         scenario4_web_of_trust(cur, cfg, params, iterations, rows)
     elif args.scenario == '5':
-        print("=== Running Scenario B-5: Partition & Reconciliation ===")
+        print("=== Running Scenario A-5: Partition & Reconciliation ===")
         scenario5_partition_reconciliation(cur, conn, cfg, params, scale_up_nodes, depths, iterations, rows)
     else:
         raise ValueError("Unsupported scenario for security patterns")
@@ -446,7 +405,7 @@ if __name__ == '__main__':
    # 결과 저장
     result_dir = Path(ROOT) / cfg.data_result_path
     result_dir.mkdir(parents=True, exist_ok=True)
-    output_file = result_dir / f"C_{args.scenario}_results.csv"
+    output_file = result_dir / f"A_{args.scenario}_results.csv"
     with open(output_file, 'w', newline='') as f:
         cols = []
         if args.scenario in ['1', '2', '5']:

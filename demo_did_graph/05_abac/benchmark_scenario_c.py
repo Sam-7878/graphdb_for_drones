@@ -210,15 +210,6 @@ def scenario4_web_of_trust(cur, cfg, params, iterations, rows):
         MATCH path=(c:Entity {{did:'{client}'}})-[:CROSSED_SIGNED*1..{length}]->(a:Entity {{did:'{anchor}'}})
         RETURN count(path) AS path_count;
         """
-        # query = f"""
-        #     UNWIND $mappings AS pair
-        #     MATCH (d:Drone {id: pair.old})
-        #     DETACH DELETE d
-        #     CREATE (new:Drone {id: pair.new})
-        #     WITH pair, new
-        #     MATCH (hq:HQ {id: '{cfg.headquarters_id}'})
-        #     CREATE (hq)-[:DELEGATES]->(new);
-        # """
         cur.execute(query)
         cur.fetchone()
 
